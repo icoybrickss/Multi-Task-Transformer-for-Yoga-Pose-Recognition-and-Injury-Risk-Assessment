@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YogaSafe – Pose & Risk Analyzer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', sans-serif;
+      background:
+        radial-gradient(circle at 18% 16%, rgba(230, 80, 27, 0.14), transparent 24%),
+        radial-gradient(circle at 82% 12%, rgba(195, 17, 12, 0.12), transparent 22%),
+        radial-gradient(circle at 78% 82%, rgba(255, 187, 117, 0.18), transparent 26%),
+        linear-gradient(135deg, #fff8f5 0%, #fff1eb 44%, #ffe6dc 100%);
+      min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
+      color: #280905;
+    }
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      width: 26rem;
+      height: 26rem;
+      border-radius: 999px;
+      pointer-events: none;
+      filter: blur(16px);
+      opacity: 0.6;
+      z-index: 0;
+      animation: drift 18s ease-in-out infinite;
+    }
+    body::before {
+      top: -8rem;
+      left: -9rem;
+      background: radial-gradient(circle, rgba(255, 211, 194, 0.85) 0%, rgba(255, 211, 194, 0.28) 42%, transparent 72%);
+    }
+    body::after {
+      right: -10rem;
+      bottom: -9rem;
+      background: radial-gradient(circle, rgba(230, 80, 27, 0.28) 0%, rgba(230, 80, 27, 0.12) 42%, transparent 74%);
+      animation-delay: -9s;
+    }
+    #root { min-height: 100vh; position: relative; z-index: 1; }
+
+    @keyframes drift {
+      0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(18px, 14px, 0) scale(1.04); }
+    }
+
+    .loading-card { display:flex; align-items:center; gap:20px; background:linear-gradient(180deg,rgba(255,254,252,.92),rgba(255,247,244,.88)); border:1px solid rgba(231,199,191,.9); border-radius:16px; padding:24px 28px; margin-bottom:24px; box-shadow:0 12px 30px rgba(40,9,5,.08); backdrop-filter: blur(10px); }
+    .loading-title { font-size:15px; font-weight:700; color:#280905; margin-bottom:4px; }
+    .loading-subtitle { font-size:13px; color:#7e665f; }
+    .yoga-loader { width:40px; height:40px; border-radius:50%; border:3px solid #e7c7bf; border-top-color:#C3110C; animation:spin .8s linear infinite; flex-shrink:0; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    .bar-track { height:10px; background:#f0e6e2; border-radius:99px; flex:1; overflow:hidden; }
+    .bar-fill { height:100%; border-radius:99px; transition:width .7s ease; }
+
+    .section-card { background:linear-gradient(180deg,rgba(255,254,252,.96),rgba(255,247,244,.9)); border:1px solid rgba(231,199,191,.95); border-radius:14px; padding:20px 22px; margin-top:14px; box-shadow:0 12px 30px rgba(40,9,5,.08); backdrop-filter: blur(10px); }
+    .section-label { font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#740A03; margin:0 0 4px; }
+    .section-sub { font-size:12px; color:#7e665f; margin:0 0 16px; line-height:1.6; }
+
+    .joint-row { padding:10px 4px; border-bottom:1px solid #f5e8e4; }
+    .joint-row:last-child { border-bottom:none; }
+    .joint-row.top-joint { background:linear-gradient(90deg,#fff5f3,#fff0eb); border:1px solid #fbbfb5; border-radius:10px; padding:12px 14px; margin-bottom:6px; }
+
+    .unsafe-part-card { background:#fff; border:1px solid #fca5a5; border-radius:10px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+    .badge { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:#fff; background:#C3110C; border-radius:6px; padding:2px 7px; }
+    .badge-safe { background:#16a34a; }
+
+    .api-debug { background:#1e1e2e; border-radius:10px; padding:14px 16px; margin-top:10px; font-size:11px; font-family:monospace; color:#cdd6f4; max-height:220px; overflow-y:auto; }
+    .api-debug pre { margin:0; white-space:pre-wrap; word-break:break-all; }
+
+    details summary { cursor:pointer; font-weight:800; color:#740A03; font-size:13px; }
+    @media (prefers-reduced-motion: reduce) {
+      body::before,
+      body::after,
+      .yoga-loader {
+        animation: none;
+      }
+      .bar-fill {
+        transition: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import { createElement as h, useState, useRef, useCallback, useEffect, Fragment } from 'https://esm.sh/react@18';
+    import { createRoot } from 'https://esm.sh/react-dom@18/client';
+
+    const PLACEHOLDER = "YOUR_NGROK_URL_HERE";
+
+    // ── Circular ring ─────────────────────────────────────────────────────────
+    function Ring({ value, color, label }) {
+      const r = 54, circ = 2 * Math.PI * r, dash = (Math.min(value,100) / 100) * circ;
+      return h('svg', { width:130, height:130, viewBox:"0 0 130 130" },
+        h('circle', { cx:65, cy:65, r, fill:"none", stroke:"#e5e7eb", strokeWidth:10 }),
+        h('circle', { cx:65, cy:65, r, fill:"none", stroke:color, strokeWidth:10,
+          strokeDasharray:`${dash} ${circ}`, strokeLinecap:"round",
+          transform:"rotate(-90 65 65)", style:{ transition:"stroke-dasharray .6s ease" } }),
+        h('text', { x:65, y:60, textAnchor:"middle", fontSize:22, fontWeight:600, fill:color }, `${Math.round(value)}%`),
+        h('text', { x:65, y:78, textAnchor:"middle", fontSize:11, fill:"#6b7280" }, label || "confidence")
+      );
+    }
+
+    // ── Prediction card ───────────────────────────────────────────────────────
+    function PredCard({ label, value, confidence, scheme, ringLabel }) {
+      const C = {
+        safe:   { bg:"#f0fdf4", border:"#16a34a", badge:"#14532d", text:"#14532d", conf:"#16a34a" },
+        moderate: { bg:"#fff7ed", border:"#f97316", badge:"#9a3412", text:"#7c2d12", conf:"#ea580c" },
+        unsafe: { bg:"#ffe8e2", border:"#C3110C",  badge:"#740A03", text:"#280905", conf:"#E6501B" },
+        pose:   { bg:"#fff7f1", border:"#E6501B",  badge:"#C3110C", text:"#280905", conf:"#740A03" },
+      }[scheme];
+      return h('div', { style:{ background:C.bg, border:`1.5px solid ${C.border}`, borderRadius:16, padding:"20px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:20, flex:1, minWidth:0 } },
+        h('div', null,
+          h('p', { style:{ fontSize:12, fontWeight:600, letterSpacing:".08em", color:C.badge, textTransform:"uppercase", margin:"0 0 6px" } }, label),
+          h('p', { style:{ fontSize:26, fontWeight:700, color:C.text, margin:0, wordBreak:"break-word" } }, value)
+        ),
+        h(Ring, { value:confidence, color:C.conf, label:ringLabel })
+      );
+    }
+
+    // ── Confidence bar pair ───────────────────────────────────────────────────
+    function ConfSection({ safePct, unsafePct, isUnsafe }) {
+      return h('div', { className:"section-card" },
+        h('p', { className:"section-label" }, "Model Confidence — Safe vs Unsafe Probability"),
+        h('p', { className:"section-sub" },
+          isUnsafe
+            ? `The model predicted UNSAFE at ${unsafePct.toFixed(2)}%. The remaining ${safePct.toFixed(2)}% is the safe probability. These always sum to 100% — entirely model-learned, no hardcoded thresholds.`
+            : `The model predicted SAFE at ${safePct.toFixed(2)}%. The remaining ${unsafePct.toFixed(2)}% is residual unsafe doubt. Even at SAFE, the model still has some uncertainty — decomposed below.`
+        ),
+        // Safe bar
+        h('div', { style:{ marginBottom:12 } },
+          h('div', { style:{ display:"flex", justifyContent:"space-between", marginBottom:5 } },
+            h('span', { style:{ fontSize:13, fontWeight:700, color:"#16a34a" } }, "SAFE probability"),
+            h('span', { style:{ fontSize:13, fontWeight:800, color:"#16a34a" } }, `${safePct.toFixed(2)}%`)
+          ),
+          h('div', { className:"bar-track" }, h('div', { className:"bar-fill", style:{ width:`${safePct}%`, background:"#16a34a" } }))
+        ),
+        // Unsafe bar
+        h('div', null,
+          h('div', { style:{ display:"flex", justifyContent:"space-between", marginBottom:5 } },
+            h('span', { style:{ fontSize:13, fontWeight:700, color:"#C3110C" } }, "UNSAFE probability"),
+            h('span', { style:{ fontSize:13, fontWeight:800, color:"#C3110C" } }, `${unsafePct.toFixed(2)}%`)
+          ),
+          h('div', { className:"bar-track" }, h('div', { className:"bar-fill", style:{ width:`${unsafePct}%`, background:"#C3110C" } }))
+        )
+      );
+    }
+
+    // ── Unsafe parts report ───────────────────────────────────────────────────
+    function UnsafeParts({ explanation }) {
+      const unsafe = (explanation || []).filter(e => e.out_of_range);
+      return h('div', { className:"section-card" },
+        h('p', { className:"section-label" }, "Annotation Reference Range Comparison"),
+        h('p', { className:"section-sub" }, "Shown for transparency only. These ranges were used during dataset annotation and are NOT used by the model during inference."),
+        unsafe.length === 0
+          ? h('div', { style:{ background:"linear-gradient(180deg,#f0fdf4,#dcfce7)", border:"1px solid #86efac", borderRadius:14, padding:"16px 20px" } },
+              h('p', { style:{ margin:"0 0 3px", fontWeight:800, fontSize:13, color:"#14532d" } }, "✓ All joints are within annotation reference ranges"),
+              h('p', { style:{ margin:0, fontSize:12, color:"#166534" } }, "Risk signal is model-learned. No joint values fell outside reference ranges.")
+            )
+          : h('div', null, ...unsafe.map(e => {
+              const [lo, hi] = e.safe_range || [null, null];
+              const over = hi !== null && e.value > hi, under = lo !== null && e.value < lo;
+              return h('div', { key:e.feature_key, className:"unsafe-part-card" },
+                h('div', null,
+                  h('p', { style:{ margin:"0 0 3px", fontWeight:800, fontSize:14, color:"#740A03" } }, e.body_part),
+                  h('p', { style:{ margin:0, fontSize:12, color:"#7e665f" } },
+                    e.safe_range ? `Ref range: ${lo}${e.unit||""} – ${hi}${e.unit||""}` : "No reference range"
+                  )
+                ),
+                h('div', { style:{ textAlign:"right" } },
+                  h('p', { style:{ margin:"0 0 2px", fontWeight:800, fontSize:16, color:"#C3110C" } }, e.value != null ? `${e.value}${e.unit||""}` : "N/A"),
+                  h('p', { style:{ margin:0, fontSize:11, color:"#E6501B", fontWeight:700 } }, over ? "above max" : under ? "below min" : "outside range")
+                )
+              );
+            }))
+      );
+    }
+
+    // ── Joint risk ranking ────────────────────────────────────────────────────
+    function JointRanking({ explanation, unsafePct }) {
+      if (!explanation || explanation.length === 0) return null;
+      return h('div', { className:"section-card" },
+        h('p', { className:"section-label" }, "Per-Joint Risk Assessment"),
+        h('p', { className:"section-sub" },
+          "Ranked by learned risk probability per joint, derived from the model's joint_risk_head output trained on labeled data."
+        ),
+        h('p', { style:{ margin:"0 0 14px", fontSize:12, color:"#7e665f", lineHeight:1.6 } },
+          "Color meaning: red = high risk (probability ≥ 60%), orange = moderate risk (probability 20–59%), green = low risk (probability < 20%)."
+        ),
+        h('div', null, ...explanation.slice(0,8).map((e, i) => {
+          const prob = e.model_prob * 100;
+          const isTop = i === 0;
+          const barColor = prob > 70 ? "#C3110C" : prob > 40 ? "#E6501B" : prob > 20 ? "#f59e0b" : "#16a34a";
+          const valStr = e.value != null ? `${e.value}${e.unit||""}` : null;
+          return h('div', { key:e.feature_key, className:`joint-row${isTop?" top-joint":""}` },
+            h('div', { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:7 } },
+              h('span', { style:{ fontSize:12, fontWeight:800, color:"#9e8880", minWidth:24, textAlign:"right" } }, `#${i+1}`),
+              h('span', { style:{ fontSize:13, fontWeight: isTop?800:600, color:"#280905", flex:1 } }, e.body_part),
+              isTop && h('span', { className:"badge" }, "PRIMARY"),
+              valStr && h('span', { style:{ fontSize:12, fontWeight:700, color: e.out_of_range?"#C3110C":"#7e665f", background: e.out_of_range?"#fff0ee":"#f5f0ee", borderRadius:6, padding:"2px 8px", border: e.out_of_range?"1px solid #fbbfb5":"none" } }, e.out_of_range ? `⚠ ${valStr}` : valStr)
+            ),
+            h('div', { style:{ display:"flex", alignItems:"center", gap:10, paddingLeft:34 } },
+              h('div', { className:"bar-track" }, h('div', { className:"bar-fill", style:{ width:`${Math.min(prob,100)}%`, background:barColor } })),
+              h('span', { style:{ fontSize:12, fontWeight:800, color:barColor, minWidth:44, textAlign:"right" } }, `${prob.toFixed(1)}%`)
+            ),
+            isTop && h('div', { style:{ paddingLeft:34, marginTop:6, fontSize:12, color:"#7e665f" } },
+              `Contributes ${e.unsafe_contrib_pp?.toFixed(2) ?? "–"}pp of the ${unsafePct?.toFixed(2) ?? "–"}% total unsafe signal`
+            )
+          );
+        }))
+      );
+    }
+
+    // ── Unsafe decomposition ──────────────────────────────────────────────────
+    function Decomp({ explanation, unsafePct, primaryCause, isUnsafe, safePct }) {
+      if (!explanation || explanation.length === 0) return null;
+      const sorted = [...explanation].sort((a,b) => b.unsafe_contrib_pp - a.unsafe_contrib_pp).slice(0,5);
+      return h('div', { className:"section-card" },
+        h('p', { className:"section-label" }, "Unsafe Signal Decomposition"),
+        h('p', { className:"section-sub" },
+          "Each joint's share of the total unsafe probability, computed from joint_risk_head outputs weighted by overall unsafe confidence."
+        ),
+
+        // Primary cause callout
+        primaryCause && h('div', { style:{ background:"linear-gradient(90deg,#fff0ee,#ffe8e4)", border:"1px solid #fbbfb5", borderRadius:10, padding:"14px 16px", margin:"0 0 16px", display:"flex", gap:12, alignItems:"flex-start" } },
+          h('span', { style:{ fontSize:22 } }, "⚠"),
+          h('div', null,
+            h('p', { style:{ margin:"0 0 3px", fontSize:13, fontWeight:800, color:"#740A03" } }, `Primary cause: ${primaryCause}`),
+            h('p', { style:{ margin:0, fontSize:12, color:"#7e665f", lineHeight:1.6 } },
+              `${sorted[0]?.unsafe_contrib_pp?.toFixed(1) ?? "–"} percentage points of the ${unsafePct?.toFixed(2) ?? "–"}% unsafe signal come from ${primaryCause} alone — making it the leading driver. Entirely model-driven, no hardcoded thresholds.`
+            )
+          )
+        ),
+
+        // Per-joint rows
+        h('div', null, ...sorted.map((e, i) => {
+          const share = unsafePct > 0 ? (e.unsafe_contrib_pp / unsafePct) * 100 : 0;
+          const barColor = i===0 ? "#C3110C" : i===1 ? "#E6501B" : "#f59e0b";
+          return h('div', { key:e.feature_key, style:{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom: i < sorted.length-1 ? "1px solid #f5e8e4":"none" } },
+            h('span', { style:{ fontSize:12, color:"#9e8880", minWidth:20 } }, `${i+1}.`),
+            h('span', { style:{ fontSize:13, fontWeight: i===0?800:600, color:"#280905", flex:1 } }, e.body_part),
+            h('div', { style:{ width:100 } },
+              h('div', { className:"bar-track" }, h('div', { className:"bar-fill", style:{ width:`${Math.min(share,100)}%`, background:barColor } }))
+            ),
+            h('span', { style:{ fontSize:12, fontWeight:700, color:barColor, minWidth:52, textAlign:"right" } }, `${e.unsafe_contrib_pp?.toFixed(2) ?? "–"}pp`),
+            h('span', { style:{ fontSize:11, color:"#9e8880", minWidth:50, textAlign:"right" } }, `(${share.toFixed(1)}%)`)
+          );
+        })),
+
+        h('p', { style:{ margin:"14px 0 0", fontSize:11, color:"#9e8880", fontStyle:"italic" } },
+          `Top-5 joints account for ${sorted.reduce((s,e)=>s+(e.unsafe_contrib_pp??0),0).toFixed(2)}pp of ${unsafePct?.toFixed(2) ?? "–"}% total unsafe signal. Rankings from joint_risk_head only.`
+        )
+      );
+    }
+
+    // ── API data notice ───────────────────────────────────────────────────────
+    function ApiNotice({ result }) {
+      const hasExplain = result && result.explanation && result.explanation.length > 0;
+      const hasSafeProb = result && result["Safe Probability"] != null;
+      if (hasExplain && hasSafeProb) return null;
+      return h('div', { style:{ background:"linear-gradient(180deg,#fffbeb,#fef9c3)", border:"1.5px solid #fde047", borderRadius:12, padding:"14px 18px", marginTop:14 } },
+        h('p', { style:{ margin:"0 0 4px", fontWeight:800, fontSize:13, color:"#713f12" } }, "⚠ Notebook /predict cell needs updating"),
+        h('p', { style:{ margin:"0 0 8px", fontSize:12, color:"#854d0e", lineHeight:1.6 } },
+          !hasSafeProb
+            ? "The API response is missing Safe Probability and Unsafe Probability — the /predict cell is still calling only predict_video(). Replace it with the updated cell that also calls explain_risk()."
+            : "The API response is missing explanation data — joint risk ranking and unsafe decomposition won't show until the notebook cell is updated."
+        ),
+        h('details', { style:{ marginTop:6 } },
+          h('summary', { style:{ fontSize:12, color:"#854d0e", cursor:"pointer" } }, "Show raw API response"),
+          h('div', { className:"api-debug" },
+            h('pre', null, JSON.stringify(result, null, 2))
+          )
+        )
+      );
+    }
+
+    // ── Main App ──────────────────────────────────────────────────────────────
+    function App() {
+      const [ngrokUrl, setNgrokUrl] = useState("");
+      const [videoFile, setVideoFile] = useState(null);
+      const [previewUrl, setPreviewUrl] = useState(null);
+      const [status, setStatus] = useState("idle");
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState(null);
+      const [hwInfo, setHwInfo] = useState({ webgpu: false });
+      const [dragOver, setDragOver] = useState(false);
+      const fileRef = useRef();
+
+      useEffect(() => {
+        try { setHwInfo({ webgpu: typeof navigator !== 'undefined' && !!navigator.gpu }); } catch(e) {}
+      }, []);
+
+      const handleFile = useCallback((file) => {
+        if (!file || !file.type.startsWith("video/")) { setError("Please upload a video file."); return; }
+        setVideoFile(file); setPreviewUrl(URL.createObjectURL(file));
+        setResult(null); setError(null); setStatus("idle");
+      }, []);
+
+      const handleAnalyze = async () => {
+        const base = (ngrokUrl.trim() || PLACEHOLDER).replace(/\/$/, "");
+        if (base === PLACEHOLDER) { setError("Paste your Cloudflare/ngrok URL above first."); return; }
+        setStatus("analyzing"); setError(null); setResult(null);
+        try {
+          const form = new FormData();
+          form.append("file", videoFile);
+          form.append("device", "auto");
+          form.append("client_webgpu", hwInfo.webgpu ? "1" : "0");
+          const res = await fetch(`${base}/predict`, { method:"POST", body:form });
+          if (!res.ok) throw new Error((await res.text()) || `Server error ${res.status}`);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          setResult(data); setStatus("done");
+        } catch(e) { setError(e.message); setStatus("idle"); }
+      };
+
+      const reset = () => {
+        setVideoFile(null); setPreviewUrl(null); setResult(null);
+        setError(null); setStatus("idle");
+        if (fileRef.current) fileRef.current.value = "";
+      };
+
+      // Derived
+      const risk       = (result?.["Predicted Risk"] || "").toLowerCase();
+      const isUnsafe   = risk === "unsafe";
+      const scheme     = risk === "safe" ? "safe" : "unsafe";
+      const busy       = status === "analyzing";
+      const timings    = result?.timings ?? null;
+      const expl       = result?.explanation ?? null;
+      const primary    = result?.primary_cause ?? null;
+      const safePct    = result?.["Safe Probability"] ?? null;
+      const unsafePct  = result?.["Unsafe Probability"] ?? null;
+      const rawRiskConfidence = Number(result?.["Risk Confidence"] ?? 0);
+      const boundedRiskConfidence = Number.isFinite(rawRiskConfidence)
+        ? Math.min(100, Math.max(0, rawRiskConfidence))
+        : 0;
+      const safeFromRisk = risk === "unsafe"
+        ? 100 - boundedRiskConfidence
+        : boundedRiskConfidence;
+      const computedSafePct = Number(safePct);
+      const injurySafeConfidence = Number.isFinite(computedSafePct)
+        ? Math.min(100, Math.max(0, computedSafePct))
+        : safeFromRisk;
+      const injuryUnsafeEquivalent = 100 - injurySafeConfidence;
+      const injuryScheme = injuryUnsafeEquivalent >= 60
+        ? "unsafe"
+        : injuryUnsafeEquivalent >= 20
+          ? "moderate"
+          : "safe";
+
+      return h('div', { style:{ minHeight:"100vh", paddingBottom:80 } },
+
+        // Header
+        h('div', { style:{ background:"rgba(255,255,255,.78)", backdropFilter:"blur(10px)", borderBottom:"1px solid #e7c7bf", padding:"18px 0", boxShadow:"0 1px 0 rgba(40,9,5,.03)" } },
+          h('div', { style:{ maxWidth:780, margin:"0 auto", padding:"0 24px" } },
+            h('p', { style:{ margin:"0 0 2px", fontWeight:800, fontSize:17, color:"#280905" } }, "YogaAsanas Testing"),
+            h('p', { style:{ margin:0, fontSize:12, color:"#7e665f" } }, "Pose classification & injury risk assessment")
+          )
+        ),
+
+        h('div', { style:{ maxWidth:780, margin:"0 auto", padding:"32px 24px 0" } },
+
+          // Backend URL
+          h('div', { style:{ background:"linear-gradient(180deg,#fffefc,#fff7f4)", border:"1px solid #e7c7bf", borderRadius:14, padding:"18px 20px", marginBottom:24, boxShadow:"0 10px 26px rgba(40,9,5,.05)" } },
+            h('label', { style:{ fontSize:13, fontWeight:700, color:"#740A03", display:"block", marginBottom:8 } }, "Colab backend URL"),
+            h('input', {
+              type:"text", placeholder:"https://xxxx-xx-xx.trycloudflare.com",
+              value:ngrokUrl, onChange:e => setNgrokUrl(e.target.value),
+              style:{ width:"100%", padding:"9px 14px", fontSize:14, borderRadius:10, border:"1.5px solid #e7c7bf", outline:"none", color:"#280905", fontFamily:"inherit", background:"#fffaf8" }
+            }),
+            h('p', { style:{ margin:"8px 0 0", fontSize:12, color:"#7e665f" } }, "Paste your Cloudflare/ngrok link from Colab — update per session.")
+          ),
+
+          // Upload zone
+          !videoFile && h('div', {
+            onDragOver:e => { e.preventDefault(); setDragOver(true); },
+            onDragLeave:() => setDragOver(false),
+            onDrop:e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); },
+            onClick:() => fileRef.current.click(),
+            style:{ border:`2px dashed ${dragOver?"#C3110C":"#E6501B"}`, borderRadius:16, background: dragOver?"linear-gradient(180deg,#fff3ef,#ffe8e2)":"linear-gradient(180deg,#fffaf8,#fff3ef)", padding:"52px 24px", textAlign:"center", cursor:"pointer", transition:"all .15s", marginBottom:24, boxShadow:"0 10px 26px rgba(40,9,5,.05)" }
+          },
+            h('div', { style:{ width:56, height:56, borderRadius:14, background:"linear-gradient(135deg,#C3110C,#E6501B)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" } },
+              h('svg', { width:28, height:28, viewBox:"0 0 24 24", fill:"none", stroke:"#fff6f4", strokeWidth:1.8, strokeLinecap:"round" },
+                h('path', { d:"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }),
+                h('polyline', { points:"17 8 12 3 7 8" }),
+                h('line', { x1:12, y1:3, x2:12, y2:15 })
+              )
+            ),
+            h('p', { style:{ margin:"0 0 6px", fontWeight:700, fontSize:16, color:"#740A03" } }, "Drop your video here"),
+            h('p', { style:{ margin:0, fontSize:13, color:"#7e665f" } }, "or click to browse — MP4, MOV, AVI supported"),
+            h('input', { ref:fileRef, type:"file", accept:"video/*", style:{ display:"none" }, onChange:e => handleFile(e.target.files[0]) })
+          ),
+
+          // Video preview
+          videoFile && h('div', { style:{ background:"linear-gradient(180deg,#fffefc,#fff7f4)", border:"1px solid #e7c7bf", borderRadius:16, overflow:"hidden", marginBottom:24, boxShadow:"0 10px 26px rgba(40,9,5,.05)" } },
+            h('video', { src:previewUrl, controls:true, style:{ width:"100%", maxHeight:360, background:"#000", display:"block" } }),
+            h('div', { style:{ padding:"16px 20px", display:"flex", flexDirection:"column", gap:12 } },
+              h('div', null,
+                h('p', { style:{ margin:"0 0 2px", fontWeight:700, fontSize:14, color:"#280905", wordBreak:"break-all" } }, videoFile.name),
+                h('p', { style:{ margin:0, fontSize:12, color:"#7e665f" } }, `${(videoFile.size/1024/1024).toFixed(1)} MB`)
+              ),
+              h('div', { style:{ display:"flex", gap:10, flexWrap:"wrap", justifyContent:"flex-end" } },
+                h('button', { onClick:reset, style:{ padding:"8px 16px", borderRadius:10, border:"1.5px solid #e7b3a9", background:"#fff7f4", fontSize:13, color:"#740A03", cursor:"pointer", fontFamily:"inherit", fontWeight:700 } }, "Change video"),
+                h('button', { onClick:handleAnalyze, disabled:busy,
+                  style:{ padding:"8px 20px", borderRadius:10, border:"none", background: busy?"linear-gradient(135deg,#E6501B,#C3110C)":"linear-gradient(135deg,#740A03,#C3110C)", color:"#fff", fontSize:13, fontWeight:700, cursor: busy?"not-allowed":"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:8, justifyContent:"center" } },
+                  busy ? "Analyzing…" : "Analyze pose"
+                )
+              )
+            )
+          ),
+
+          // Error
+          error && h('div', { style:{ background:"linear-gradient(180deg,#fff1ee,#ffe4de)", border:"1.5px solid #E6501B", borderRadius:12, padding:"14px 18px", marginBottom:24, boxShadow:"0 8px 18px rgba(230,80,27,.08)" } },
+            h('p', { style:{ margin:0, fontSize:14, color:"#740A03", fontWeight:700 } }, error)
+          ),
+
+          // Loading
+          busy && h('div', { className:"loading-card" },
+            h('div', { className:"yoga-loader" }),
+            h('div', { className:"loading-copy" },
+              h('div', { className:"loading-title" }, "Analyzing your pose…"),
+              h('div', { className:"loading-subtitle" }, "Extracting landmarks, running 3-head inference, computing joint risk scores…")
+            )
+          ),
+
+          // ── RESULTS ─────────────────────────────────────────────────────────
+          result && status === "done" && h('div', null,
+
+            // Prediction cards
+            h('div', { style:{ display:"flex", gap:16, marginBottom:0, flexWrap:"wrap" } },
+              h(PredCard, { label:"Detected pose", value:result["Predicted Pose"] ?? "–", confidence:parseFloat(result["Pose Confidence"] ?? 0), scheme:"pose" }),
+              h(PredCard, { label:"Injury risk", value:"SAFE", confidence:injurySafeConfidence, scheme:injuryScheme, ringLabel:"probability" })
+            ),
+
+            // Frames tag
+            h('div', { style:{ marginTop:10, background:"linear-gradient(180deg,#fffefc,#fff7f4)", border:"1px solid #e7c7bf", borderRadius:12, padding:"12px 18px", fontSize:13, color:"#7e665f", boxShadow:"0 8px 18px rgba(40,9,5,.04)" } },
+              h('span', { style:{ fontWeight:800, color:"#740A03" } }, result["Frames Processed"]),
+              " frames processed"
+            ),
+
+            // ③ Model confidence breakdown (safe vs unsafe)
+            safePct !== null && unsafePct !== null && h(ConfSection, { safePct, unsafePct, isUnsafe }),
+
+            // ④ Per-joint risk assessment
+            expl && h(JointRanking, { explanation: expl, unsafePct }),
+
+            // ⑤ Unsafe signal decomposition
+            expl && unsafePct !== null && h(Decomp, { explanation:expl, unsafePct, primaryCause:primary, isUnsafe, safePct }),
+
+            // Notebook/API update notice
+            h(ApiNotice, { result }),
+
+            // ⑥ Timings (collapsed)
+            h('details', { style:{ marginTop:14, border:"1px solid #e7c7bf", borderRadius:10, padding:10, background:"linear-gradient(180deg,#fffdfb,#fff7f4)", boxShadow:"0 8px 18px rgba(40,9,5,.04)" } },
+              h('summary', null, "Hardware inference timings"),
+              h('div', { style:{ fontSize:13, color:"#7e665f", marginTop:10, display:"flex", flexDirection:"column", gap:4 } },
+                h('p', { style:{ margin:"4px 0" } }, `Browser WebGPU: ${hwInfo.webgpu ? "Yes" : "No"}`),
+                timings && [
+                  ["Landmark Extraction",    timings.landmark_extraction_ms,    1],
+                  ["Bio Feature Extraction", timings.bio_feature_extraction_ms, 1],
+                  ["Preprocessing/Scaling",  timings.preprocessing_ms,          1],
+                  ["Tensor Transfer",        timings.tensor_transfer_ms,        1],
+                  ["Model Inference (avg)",  timings.model_inference_ms,        3],
+                  ["Postprocessing",         timings.postprocessing_ms,         3],
+                  ["TOTAL",                  timings.total_ms,                  1],
+                ].map(([lbl, val, dp]) =>
+                  h('p', { key:lbl, style:{ margin:"4px 0", fontWeight: lbl==="TOTAL"?700:400 } }, `${lbl}: ${Number(val??0).toFixed(dp)} ms`)
+                ),
+                timings?.gpu_memory_allocated_mb != null && [
+                  h('p', { key:"gpa", style:{ margin:"4px 0" } }, `GPU Allocated: ${Number(timings.gpu_memory_allocated_mb).toFixed(1)} MB`),
+                  h('p', { key:"gpr", style:{ margin:"4px 0" } }, `GPU Reserved: ${Number(timings.gpu_memory_reserved_mb??0).toFixed(1)} MB`)
+                ]
+              )
+            ),
+
+            // ⑦ Annotation reference range comparison
+            expl && h(UnsafeParts, { explanation: expl })
+          )
+        )
+      );
+    }
+
+    createRoot(document.getElementById('root')).render(h(App));
+  </script>
+</body>
+</html>
